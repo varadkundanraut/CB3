@@ -213,10 +213,25 @@ def main():
     
 
     # Display full chat history using Streamlit's chat_message
+    # Display chat history
     if "chat_history" in st.session_state:
         for chat in st.session_state.chat_history:
             with st.chat_message(chat["role"]):
                 st.markdown(chat["content"])
+
+        # Scroll only if chat is updated
+        if st.session_state.get("chat_updated", False):
+            st.markdown(
+                """
+                <script>
+                const chatBox = window.document.body;
+                chatBox.scrollTop = chatBox.scrollHeight;
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
+            st.session_state.chat_updated = False  # Reset flag
+
 
 
     # if "current_question" in st.session_state and st.session_state.current_question:
