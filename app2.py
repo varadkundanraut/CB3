@@ -92,7 +92,6 @@ def main():
         st.write("4. After loading documents, click 'Create Vector Store' to process.Documents can only be uploaded once per session")
         st.write("5. Enter a question in the text area and submit to interact with the AI chatbot.")
         st.write("6. Click on Generate Chat Summary to get the conversation of the Chat Session.")
-        st.write("Visit https://aravind-llama3groqchatbot.streamlit.app/ if you want to use the generic chatbot.")
 
     # Sidebar for document source selection
     st.sidebar.subheader("Choose document source:")
