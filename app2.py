@@ -8,35 +8,63 @@ def get_docs_from_url(url):
     return split_docs
 
 # %%
+from sentence_transformers import SentenceTransformer
+from langchain.docstore.document import Document as LangchainDocument
+import faiss
+import numpy as np
 import time
 from langchain_community.document_loaders import PyPDFLoader
+from docx import Document as DocxDocument  # for .docx
+from langchain.docstore.document import Document as LangchainDocument
 import requests
 from pathlib import Path
-from langchain_text_splitters import (
-    Language,
-    RecursiveCharacterTextSplitter
-)
+from langchain_text_splitters import (Language,RecursiveCharacterTextSplitter)
 import os
-
 from dotenv import load_dotenv
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.document_loaders import WebBaseLoader    
 from groq import Groq
 
+
 # %%
 def get_docs(uploaded_file):
     start_time = time.time()
-    with open("temp.pdf", "wb") as f:
+    file_name = uploaded_file.name.lower()
+
+    # Save uploaded file temporarily
+    with open("temp_file", "wb") as f:
         f.write(uploaded_file.getbuffer())
-    loader = PyPDFLoader("temp.pdf")
-    documents = loader.load()
+
+    documents = []
+
+    if file_name.endswith(".pdf"):
+        loader = PyPDFLoader("temp_file")
+        documents = loader.load()
+
+    elif file_name.endswith(".txt"):
+        with open("temp_file", "r", encoding="utf-8") as f:
+            content = f.read()
+        documents = [LangchainDocument(page_content=content)]
+
+    elif file_name.endswith(".docx"):
+        doc = DocxDocument("temp_file")
+        full_text = "\n".join([para.text for para in doc.paragraphs])
+        documents = [LangchainDocument(page_content=full_text)]
+
+    else:
+        st.error("Unsupported file format. Please upload PDF, DOCX, or TXT.")
+        os.remove("temp_file")
+        return []
+
+    # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
     final_documents = text_splitter.split_documents(documents)
-    st.write('Documents Loaded')
+
+    st.write("Documents Loaded")
     end_time = time.time()
     st.write(f"Time taken to load documents: {end_time - start_time:.2f} seconds")
-    os.remove("temp.pdf")  # Clean up the temporary file
+    os.remove("temp_file")  # Clean up
     return final_documents
 
 # %%
@@ -85,7 +113,7 @@ def main():
     st.set_page_config(page_title='Bajaj Finserv Chatbot')
 
     st.title("Bajaj Finserv Chatbot")
-    with st.expander("Instructions to upload Text PDF/URL"):
+    with st.expander("Instructions to upload PDF, DOCX, or TXT / URL"):
         st.write("1. Pull up the side bar in top left corner.")
         st.write("2. If uploading a PDF, click 'Upload PDF', select your file, and wait for 'Documents Loaded' confirmation.")
         st.write("3. If entering a web URL, enter the URL, click 'Enter Web URL', and submit 'Process URL' and wait for 'Documents Loaded from URL' confirmation.")
@@ -95,7 +123,7 @@ def main():
 
     # Sidebar for document source selection
     st.sidebar.subheader("Choose document source:")
-    option = st.sidebar.radio("Select one:", ("Upload PDF", "Enter Web URL"))
+    option = st.sidebar.radio("Select one:", ("Upload File (PDF, DOCX, or TXT)", "Enter Web URL"))
 
     if "docs" not in st.session_state:
         st.session_state.docs = None
@@ -110,8 +138,9 @@ def main():
     if "chat_summary" not in st.session_state:
         st.session_state.chat_summary = ""
 
-    if option == "Upload PDF":
-        uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type=["pdf"])
+    if option == "Upload File (PDF, DOCX, or TXT)":
+        uploaded_file = st.sidebar.file_uploader("Upload a file", type=["pdf", "docx", "txt"])
+
         if uploaded_file is not None:
             if st.session_state.docs is None:
                 with st.spinner("Loading documents..."):
@@ -212,35 +241,64 @@ def main():
     
 
     # Display full chat history using Streamlit's chat_message
-    # Display chat history
     if "chat_history" in st.session_state:
         for chat in st.session_state.chat_history:
             with st.chat_message(chat["role"]):
                 st.markdown(chat["content"])
 
-        # Scroll only if chat is updated
-        if st.session_state.get("chat_updated", False):
-            st.markdown(
-                """
-                <script>
-                const chatBox = window.document.body;
-                chatBox.scrollTop = chatBox.scrollHeight;
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
-            st.session_state.chat_updated = False  # Reset flag
+    # Real-time input using st.chat_input
+    user_message = st.chat_input("Ask your question here...")
 
+    if user_message:
+        with st.spinner("Assistant is typing..."):
+            if st.session_state.vectorstore is not None:
+                # Use documents
+                retriever = st.session_state.vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+                context = retriever.invoke(user_message)
+                prompt = f'''
+                Answer the user's question based on the latest input provided in the chat history. Ignore
+                previous inputs unless they are directly related to the latest question. Provide a generic
+                answer if the answer to the user's question is not present in the context by mentioning it
+                as general information.
 
+                Context: {context}
 
+                Chat History: {st.session_state.chat_history}
+
+                Latest Question: {user_message}
+                '''
+            else:
+                # No documents
+                prompt = f'''
+                Answer the user's question based on the latest input provided in the chat history. Ignore
+                previous inputs unless they are directly related to the latest question.
+
+                Chat History: {st.session_state.chat_history}
+
+                Latest Question: {user_message}
+                '''
+
+            messages = [{'role': 'system', 'content': 'You are a very helpful assistant'}]
+            messages.append({'role': 'user', 'content': prompt})
+
+            try:
+                ai_response = chat_groq(messages)
+            except Exception as e:
+                st.error(f"Error occurred during chat_groq execution: {str(e)}")
+                ai_response = "An error occurred while fetching response. Please try again."
+
+            # Update chat history
+            st.session_state.chat_history.append({'role': 'user', 'content': user_message})
+            st.session_state.chat_history.append({'role': 'assistant', 'content': ai_response})
+
+            # Show current user message and response in chat bubbles
+            with st.chat_message("user"):
+                st.markdown(user_message)
+            with st.chat_message("assistant"):
+                st.markdown(ai_response)
     # if "current_question" in st.session_state and st.session_state.current_question:
     #     st.markdown(f"**Current Question:** {st.session_state.current_question}")
 
-    st.text_area("Enter your question:", key="user_input")
-    if st.session_state.vectorstore is not None:
-        st.button('Submit', on_click=submit_with_doc)  
-    else:
-        st.button('Submit', on_click=submit_without_doc)
 
     # # Display user's current question in chat format
     # if "current_question" in st.session_state and st.session_state.current_question:
@@ -253,26 +311,26 @@ def main():
     #         st.markdown(st.session_state.current_prompt)
 
 
-    # Button to generate chat summary
-    if st.button('Generate Chat Summary'):
-        st.session_state.chat_summary = summarize_chat_history(st.session_state.chat_history)
+    # # Button to generate chat summary
+    # if st.button('Generate Chat Summary'):
+    #     st.session_state.chat_summary = summarize_chat_history(st.session_state.chat_history)
 
-    # Display the chat summary if available
-    if st.session_state.chat_summary:
-        with st.expander("Chat Summary"):
-            st.write(st.session_state.chat_summary)
+    # # Display the chat summary if available
+    # if st.session_state.chat_summary:
+    #     with st.expander("Chat Summary"):
+    #         st.write(st.session_state.chat_summary)
 
-    # Display the last 4 messages in an expander
-    with st.expander("Recent Chat History"):
-        recent_history = st.session_state.chat_history[-8:][::-1]
-        reversed_history = []
-        for i in range(0, len(recent_history), 2):
-            if i+1 < len(recent_history):
-                reversed_history.extend([recent_history[i+1], recent_history[i]])
-            else:
-                reversed_history.append(recent_history[i])
-        for chat in reversed_history:
-            st.write(f"{chat['role'].capitalize()}: {chat['content']}")
+    # # Display the last 4 messages in an expander
+    # with st.expander("Recent Chat History"):
+    #     recent_history = st.session_state.chat_history[-8:][::-1]
+    #     reversed_history = []
+    #     for i in range(0, len(recent_history), 2):
+    #         if i+1 < len(recent_history):
+    #             reversed_history.extend([recent_history[i+1], recent_history[i]])
+    #         else:
+    #             reversed_history.append(recent_history[i])
+    #     for chat in reversed_history:
+    #         st.write(f"{chat['role'].capitalize()}: {chat['content']}")
 
 if __name__ == "__main__":
     main()
