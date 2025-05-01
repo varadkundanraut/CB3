@@ -8,63 +8,35 @@ def get_docs_from_url(url):
     return split_docs
 
 # %%
-from sentence_transformers import SentenceTransformer
-from langchain.docstore.document import Document as LangchainDocument
-import faiss
-import numpy as np
 import time
 from langchain_community.document_loaders import PyPDFLoader
-from docx import Document as DocxDocument  # for .docx
-from langchain.docstore.document import Document as LangchainDocument
 import requests
 from pathlib import Path
-from langchain_text_splitters import (Language,RecursiveCharacterTextSplitter)
+from langchain_text_splitters import (
+    Language,
+    RecursiveCharacterTextSplitter
+)
 import os
+
 from dotenv import load_dotenv
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.document_loaders import WebBaseLoader    
 from groq import Groq
 
-
 # %%
 def get_docs(uploaded_file):
     start_time = time.time()
-    file_name = uploaded_file.name.lower()
-
-    # Save uploaded file temporarily
-    with open("temp_file", "wb") as f:
+    with open("temp.pdf", "wb") as f:
         f.write(uploaded_file.getbuffer())
-
-    documents = []
-
-    if file_name.endswith(".pdf"):
-        loader = PyPDFLoader("temp_file")
-        documents = loader.load()
-
-    elif file_name.endswith(".txt"):
-        with open("temp_file", "r", encoding="utf-8") as f:
-            content = f.read()
-        documents = [LangchainDocument(page_content=content)]
-
-    elif file_name.endswith(".docx"):
-        doc = DocxDocument("temp_file")
-        full_text = "\n".join([para.text for para in doc.paragraphs])
-        documents = [LangchainDocument(page_content=full_text)]
-
-    else:
-        st.error("Unsupported file format. Please upload PDF, DOCX, or TXT.")
-        os.remove("temp_file")
-        return []
-
-    # Split text into chunks
+    loader = PyPDFLoader("temp.pdf")
+    documents = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
     final_documents = text_splitter.split_documents(documents)
-
-    st.write("Documents Loaded")
+    st.write('Documents Loaded')
     end_time = time.time()
     st.write(f"Time taken to load documents: {end_time - start_time:.2f} seconds")
-    os.remove("temp_file")  # Clean up
+    os.remove("temp.pdf")  # Clean up the temporary file
     return final_documents
 
 # %%
@@ -110,20 +82,21 @@ import streamlit as st
 
 # %%
 def main():
-    st.set_page_config(page_title='Bajaj Finserv Chatbot')
+    st.set_page_config(page_title='AravindDocuQuery')
 
-    st.title("Bajaj Finserv Chatbot")
-    with st.expander("Instructions to upload PDF, DOCX, or TXT / URL"):
+    st.title("ArvDocuQuery")
+    with st.expander("Instructions to upload Text PDF/URL"):
         st.write("1. Pull up the side bar in top left corner.")
         st.write("2. If uploading a PDF, click 'Upload PDF', select your file, and wait for 'Documents Loaded' confirmation.")
         st.write("3. If entering a web URL, enter the URL, click 'Enter Web URL', and submit 'Process URL' and wait for 'Documents Loaded from URL' confirmation.")
         st.write("4. After loading documents, click 'Create Vector Store' to process.Documents can only be uploaded once per session")
         st.write("5. Enter a question in the text area and submit to interact with the AI chatbot.")
         st.write("6. Click on Generate Chat Summary to get the conversation of the Chat Session.")
+        st.write("Visit https://aravind-llama3groqchatbot.streamlit.app/ if you want to use the generic chatbot.")
 
     # Sidebar for document source selection
     st.sidebar.subheader("Choose document source:")
-    option = st.sidebar.radio("Select one:", ("Upload File (PDF, DOCX, or TXT)", "Enter Web URL"))
+    option = st.sidebar.radio("Select one:", ("Upload PDF", "Enter Web URL"))
 
     if "docs" not in st.session_state:
         st.session_state.docs = None
@@ -138,8 +111,8 @@ def main():
     if "chat_summary" not in st.session_state:
         st.session_state.chat_summary = ""
 
-    if option == "Upload File (PDF, DOCX, or TXT)":
-        uploaded_file = st.sidebar.file_uploader("Upload a file", type=["PDF, DOCX, or TXT"])
+    if option == "Upload PDF":
+        uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type=["pdf"])
         if uploaded_file is not None:
             if st.session_state.docs is None:
                 with st.spinner("Loading documents..."):
